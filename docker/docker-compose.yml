@@ -1,0 +1,51 @@
+version: '3.8'
+
+services:
+  inapp-worker:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: tm-notification-inapp
+    restart: unless-stopped
+    command: ["python", "-m", "main", "inapp"]
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      REDIS_URL: ${REDIS_URL}
+      RABBITMQ_URL: ${RABBITMQ_URL}
+      ENVIRONMENT: production
+    networks:
+      - portal-api_internal
+    healthcheck:
+      test: ["CMD", "python", "-c", "import sys; sys.exit(0)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  external-worker:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: tm-notification-external
+    restart: unless-stopped
+    command: ["python", "-m", "main", "external"]
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      REDIS_URL: ${REDIS_URL}
+      RABBITMQ_URL: ${RABBITMQ_URL}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      ENVIRONMENT: production
+    networks:
+      - portal-api_internal
+    healthcheck:
+      test: ["CMD", "python", "-c", "import sys; sys.exit(0)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+networks:
+  portal-api_internal:
+    external: true

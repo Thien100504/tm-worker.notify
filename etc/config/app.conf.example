@@ -1,0 +1,30 @@
+# Notification Service Main Configuration
+
+[rabbitmq]
+host = localhost
+port = 5672
+user = your_user
+password = your_password
+queue = notification_queue
+exchange = task_manager
+
+[database]
+url = postgresql+asyncpg://your_user:your_password@localhost:5432/taskmanager
+
+[redis]
+url = redis://localhost:6379/0
+dedup_ttl = 300
+
+[smtp]
+host = smtp.example.com
+port = 587
+user = notifications@example.com
+password = your_smtp_password
+use_tls = true
+from_email = noreply@taskmanager.local
+from_name = Task Manager AI
+max_retries = 2
+
+[general]
+environment = development
+log_level = INFO
