@@ -46,7 +46,7 @@ class Settings(BaseSettings):
     # HTTP API
     # ─────────────────────────────────────────────
     API_HOST: str = Field(default="0.0.0.0", description="HTTP API bind host")
-    API_PORT: int = Field(default=8001, description="HTTP API port")
+    API_PORT: int = Field(default=8002, description="HTTP API port")
 
     # ─────────────────────────────────────────────
     # Redis
