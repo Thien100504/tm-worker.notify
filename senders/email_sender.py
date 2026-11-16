@@ -5,8 +5,10 @@ Sends notifications via SMTP with retry logic.
 Retry strategy: 2 retries with simple backoff (5s, 10s).
 """
 
+import html
 import logging
 import smtplib
+import ssl
 import time
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
@@ -41,6 +43,10 @@ class EmailSender:
                 "EmailSender initialized WITHOUT SMTP host. "
                 "Email notifications will be skipped."
             )
+        if self._host and self._user and not self._use_tls:
+            logger.warning(
+                "SMTP_USE_TLS is off: the SMTP password is sent unencrypted."
+            )
 
     def _build_email(
         self,
@@ -53,7 +59,8 @@ class EmailSender:
         msg = MIMEMultipart("alternative")
         msg["From"] = f"{self._from_name} <{self._from_email}>"
         msg["To"] = to_email
-        msg["Subject"] = subject
+        # Subject comes from user data: never let CR/LF start a new header
+        msg["Subject"] = " ".join(subject.splitlines())
 
         # Plain text fallback
         msg.attach(MIMEText(body_text, "plain", "utf-8"))
@@ -65,7 +72,7 @@ class EmailSender:
     def _format_subject(self, message: dict[str, Any]) -> str:
         """Generate email subject from notification data."""
         event = message.get("event", "unknown")
-        data = message.get("data", {})
+        data = message.get("data") or message
         title = data.get("title", "")
 
         event_labels = {
@@ -86,16 +93,16 @@ class EmailSender:
 
     def _format_html(self, message: dict[str, Any]) -> str:
         """Generate HTML email body."""
-        data = message.get("data", {})
-        title = data.get("title", message.get("event", ""))
-        body = data.get("message", "")
-        url = data.get("url", "")
+        data = message.get("data") or message
+        # Title, body and URL come from user data: escape them for HTML
+        title = html.escape(str(data.get("title", message.get("event", ""))))
+        body = html.escape(str(data.get("message", "")))
+        url = str(data.get("url", ""))
 
         link_html = ""
-        if url:
-            link_html = (
-                f'<p><a href="{url}" style="color: #2563eb;">View details →</a></p>'
-            )
+        if url.startswith(("http://", "https://")):
+            safe_url = html.escape(url, quote=True)
+            link_html = f'<p><a href="{safe_url}" style="color: #2563eb;">View details →</a></p>'
 
         return f"""
         <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: 0 auto;">
@@ -115,7 +122,7 @@ class EmailSender:
 
     def _format_text(self, message: dict[str, Any]) -> str:
         """Generate plain text email body."""
-        data = message.get("data", {})
+        data = message.get("data") or message
         title = data.get("title", message.get("event", ""))
         body = data.get("message", "")
         url = data.get("url", "")
@@ -137,7 +144,10 @@ class EmailSender:
             try:
                 with smtplib.SMTP(self._host, self._port, timeout=30) as server:
                     if self._use_tls:
-                        server.starttls()
+                        server.ehlo()
+                        # Verify the server certificate and hostname
+                        server.starttls(context=ssl.create_default_context())
+                        server.ehlo()
                     if self._user and self._password:
                         server.login(self._user, self._password)
                     server.send_message(msg)
@@ -149,6 +159,13 @@ class EmailSender:
                 )
                 return True
 
+            except (
+                smtplib.SMTPAuthenticationError,
+                smtplib.SMTPRecipientsRefused,
+            ) as e:
+                # Wrong credentials or rejected recipient: retrying will not help
+                logger.error("Email not sent to %s: %s", msg["To"], type(e).__name__)
+                return False
             except smtplib.SMTPException as e:
                 logger.warning(
                     "SMTP error (attempt %d/%d): %s",
