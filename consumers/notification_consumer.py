@@ -17,9 +17,11 @@ Message format:
 
 import json
 import logging
+import threading
 from typing import Any
 
 import pika
+import pika.exceptions
 from pika.adapters.blocking_connection import BlockingChannel
 from pika.spec import Basic, BasicProperties
 
@@ -64,6 +66,29 @@ NOTIFICATION_EVENTS: dict[str, list[str]] = {
 }
 
 
+def with_display_fields(message: dict[str, Any]) -> dict[str, Any]:
+    """
+    portal-api publishes i18n keys and params (title_params, message_params), while the
+    Telegram and email senders need plain title/message/url fields. Fill them in.
+    """
+    out = dict(message)
+    title_params = out.get("title_params") or {}
+    message_params = out.get("message_params") or {}
+    out.setdefault(
+        "title",
+        title_params.get("title") or title_params.get("name") or out.get("event", ""),
+    )
+    actor = message_params.get("actor") or title_params.get("actor")
+    if "message" not in out and actor:
+        out["message"] = f"By {actor}"
+    if "url" not in out and out.get("project_id"):
+        url = f"{settings.FRONTEND_URL.rstrip('/')}/projects/{out['project_id']}"
+        if out.get("task_id"):
+            url += f"/kanban?taskId={out['task_id']}"
+        out["url"] = url
+    return out
+
+
 class NotificationConsumer:
     """RabbitMQ consumer for notification events."""
 
@@ -72,6 +97,8 @@ class NotificationConsumer:
         self._channel: BlockingChannel | None = None
 
         self.queue_name = queue_name
+        self._stopping = False
+        self._wake = threading.Event()  # interrupts the reconnect wait on stop()
         self.allowed_channels = allowed_channels
 
         # Lazy initialize senders
@@ -85,7 +112,10 @@ class NotificationConsumer:
 
     def _connect(self) -> None:
         """Establish connection to RabbitMQ."""
-        logger.info("Connecting to RabbitMQ: %s", settings.RABBITMQ_URL)
+        # Never log the URL itself: it contains the password
+        logger.info(
+            "Connecting to RabbitMQ at %s", settings.RABBITMQ_URL.split("@")[-1]
+        )
 
         parameters = pika.URLParameters(settings.RABBITMQ_URL)
         parameters.heartbeat = 600
@@ -180,7 +210,8 @@ class NotificationConsumer:
                     continue
 
                 try:
-                    sender.send(message)
+                    external = channel_name in ("email", "telegram")
+                    sender.send(with_display_fields(message) if external else message)
                     logger.info(
                         "Sent %s notification for event: %s",
                         channel_name,
@@ -213,25 +244,41 @@ class NotificationConsumer:
             )
 
     def start(self) -> None:
-        """Start consuming messages."""
-        self._connect()
-
-        self._channel.basic_consume(
-            queue=self.queue_name,
-            on_message_callback=self._on_message,
-            auto_ack=False,
-        )
-
-        logger.info(
-            "Waiting for messages on queue: %s (channels: %s)",
-            self.queue_name,
-            self.allowed_channels,
-        )
-        self._channel.start_consuming()
+        """Consume messages; reconnect with backoff when RabbitMQ is down or the connection drops."""
+        delay = 5
+        while not self._stopping:
+            try:
+                self._connect()
+                self._channel.basic_consume(
+                    queue=self.queue_name,
+                    on_message_callback=self._on_message,
+                    auto_ack=False,
+                )
+                logger.info(
+                    "Waiting for messages on queue: %s (channels: %s)",
+                    self.queue_name,
+                    self.allowed_channels,
+                )
+                delay = 5
+                self._channel.start_consuming()
+                if self._stopping:
+                    break
+            except pika.exceptions.AMQPError as e:
+                if self._stopping:
+                    break
+                logger.warning(
+                    "RabbitMQ connection lost (%s). Reconnecting in %ds...",
+                    type(e).__name__,
+                    delay,
+                )
+                self._wake.wait(delay)
+                delay = min(delay * 2, 60)
 
     def stop(self) -> None:
         """Stop consuming and close connection."""
         logger.info("Stopping notification consumer...")
+        self._stopping = True
+        self._wake.set()
 
         try:
             if self._channel and self._channel.is_open:
