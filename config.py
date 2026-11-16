@@ -45,7 +45,14 @@ class Settings(BaseSettings):
     # ─────────────────────────────────────────────
     # HTTP API
     # ─────────────────────────────────────────────
-    API_HOST: str = Field(default="0.0.0.0", description="HTTP API bind host")
+    API_HOST: str = Field(
+        default="127.0.0.1",
+        description="HTTP API bind host (use 0.0.0.0 only inside Docker networks)",
+    )
+    INTERNAL_API_TOKEN: str = Field(
+        default="",
+        description="Shared secret portal-api sends in X-Internal-Token (required when set)",
+    )
     API_PORT: int = Field(default=8002, description="HTTP API port")
 
     # ─────────────────────────────────────────────

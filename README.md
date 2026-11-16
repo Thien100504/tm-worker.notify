@@ -3,7 +3,7 @@
 This repository contains the Microservice responsible for sending notifications (Telegram, Email, In-App) for the Task Manager AI system.
 
 ## 🏗️ Architecture
-This microservice runs fully independently and does not expose an API. Instead, it acts as a **Consumer**:
+This microservice runs independently. It mainly acts as a **Consumer**, and it also serves a small HTTP API (port 8002, protected by `INTERNAL_API_TOKEN`) that portal-api uses to read notifications:
 1. Listens for events from **RabbitMQ** (published by `portal-api`).
 2. Handles template logic and retries.
 3. Calls third-party APIs (Telegram Bot API, SMTP Server) to deliver the notifications to users.
