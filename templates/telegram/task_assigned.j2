@@ -1,0 +1,10 @@
+🔔 <b>A new task has been assigned to you!</b>
+<b>📌 Task:</b> <u>{{ title | default(task_title) }}</u>
+{%- if project_name %}
+<b>📁 Project:</b> {{ project_name }}
+{%- endif %}
+{%- if due_date %}
+<b>⏰ Due:</b> {{ due_date }}
+{%- endif %}
+
+👉 <b>View details:</b> {{ FRONTEND_URL }}/projects/{{ project_id }}/kanban?taskId={{ task_id }}

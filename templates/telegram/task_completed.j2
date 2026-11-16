@@ -1,0 +1,7 @@
+✅ <b>Task completed!</b>
+<b>📌 Task:</b> <u>{{ title | default(task_title) }}</u>
+{%- if completed_by %}
+<b>👤 By:</b> {{ completed_by }}
+{%- endif %}
+
+👉 <b>View details:</b> {{ FRONTEND_URL }}/projects/{{ project_id }}/kanban?taskId={{ task_id }}

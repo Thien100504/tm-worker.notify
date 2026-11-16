@@ -1,0 +1,22 @@
+🔄 <b>Task updated:</b> <u>{{ title }}</u>
+
+{% if changes -%}
+<b>Changes:</b>
+{%- for key, value in changes.items() %}
+  {%- if key == 'status' %}
+  • <b>Status:</b> {{ value }}
+  {%- elif key == 'position' %}
+  • <b>Position:</b> moved (new order)
+  {%- elif key == 'assignee_id' %}
+  • <b>Assignee:</b> changed
+  {%- elif key == 'priority' %}
+  • <b>Priority:</b> {{ value }}
+  {%- elif key == 'title' %}
+  • <b>Title:</b> changed
+  {%- else %}
+  • <b>{{ key | capitalize }}:</b> {{ value }}
+  {%- endif %}
+{%- endfor %}
+{%- endif %}
+
+👉 <b>View details:</b> {{ FRONTEND_URL }}/projects/{{ project_id }}/kanban?taskId={{ task_id }}
