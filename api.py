@@ -11,19 +11,42 @@ Endpoints:
   PATCH /notifications/read-all?user_id=...
 """
 
+import logging
+import secrets
 import uuid
 from datetime import datetime
 from typing import List, Optional
 
-from fastapi import FastAPI, Depends, HTTPException, Query
+from fastapi import FastAPI, Depends, Header, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, model_validator
 from sqlalchemy import select, func, update as sa_update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from config import settings
 from database import get_db
 from models.notification import Notification
 
+logger = logging.getLogger(__name__)
+
+
+def require_internal_token(
+    x_internal_token: Optional[str] = Header(default=None),
+) -> None:
+    """Only portal-api may call this API: it sends the shared INTERNAL_API_TOKEN."""
+    expected = settings.INTERNAL_API_TOKEN
+    if not expected:
+        return  # not configured (local development): the API is bound to 127.0.0.1
+    if not x_internal_token or not secrets.compare_digest(x_internal_token, expected):
+        raise HTTPException(status_code=401, detail="notification.unauthorized")
+
+
+if not settings.INTERNAL_API_TOKEN:
+    logger.warning(
+        "INTERNAL_API_TOKEN is not set: the notification API accepts any caller."
+    )
+
 app = FastAPI(title="Notification Service API", version="1.0.0")
+INTERNAL = [Depends(require_internal_token)]
 
 
 class NotificationResponse(BaseModel):
@@ -68,10 +91,12 @@ async def health():
     return {"status": "ok", "service": "notification"}
 
 
-@app.get("/notifications", response_model=List[NotificationResponse])
+@app.get(
+    "/notifications", response_model=List[NotificationResponse], dependencies=INTERNAL
+)
 async def list_notifications(
     user_id: uuid.UUID = Query(...),
-    limit: int = Query(default=50, le=100),
+    limit: int = Query(default=50, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
     db: AsyncSession = Depends(get_db),
 ):
@@ -85,7 +110,11 @@ async def list_notifications(
     return list(result.scalars().all())
 
 
-@app.get("/notifications/unread-count", response_model=UnreadCountResponse)
+@app.get(
+    "/notifications/unread-count",
+    response_model=UnreadCountResponse,
+    dependencies=INTERNAL,
+)
 async def unread_count(
     user_id: uuid.UUID = Query(...),
     db: AsyncSession = Depends(get_db),
@@ -102,7 +131,11 @@ async def unread_count(
     return UnreadCountResponse(count=count)
 
 
-@app.patch("/notifications/{notif_id}/read", response_model=NotificationResponse)
+@app.patch(
+    "/notifications/{notif_id}/read",
+    response_model=NotificationResponse,
+    dependencies=INTERNAL,
+)
 async def mark_read(
     notif_id: uuid.UUID,
     user_id: uuid.UUID = Query(...),
@@ -124,7 +157,7 @@ async def mark_read(
     return notif.scalar_one()
 
 
-@app.patch("/notifications/read-all")
+@app.patch("/notifications/read-all", dependencies=INTERNAL)
 async def mark_all_read(
     user_id: uuid.UUID = Query(...),
     db: AsyncSession = Depends(get_db),
