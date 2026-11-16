@@ -40,7 +40,10 @@ class TelegramSender:
         self.env = None
         template_dir = pathlib.Path(__file__).parent.parent / "templates" / "telegram"
         if template_dir.exists():
-            self.env = Environment(loader=FileSystemLoader(str(template_dir)))
+            # Messages are sent with parse_mode=HTML, so escape every rendered value
+            self.env = Environment(
+                loader=FileSystemLoader(str(template_dir)), autoescape=True
+            )
             logger.info("Loaded Telegram templates from %s", template_dir)
         else:
             logger.warning("Telegram template directory not found: %s", template_dir)
@@ -63,7 +66,7 @@ class TelegramSender:
                 logger.error("Template rendering failed for %s: %s", template_key, e)
 
         # Fallback to default
-        data = message.get("data", message)
+        data = message.get("data") or message
         title = data.get("title", event)
         body = data.get("message", "")
 
@@ -78,7 +81,8 @@ class TelegramSender:
         task_url = data.get("url")
         if task_url:
             lines.append("")
-            lines.append(f'<a href="{task_url}">View details</a>')
+            safe_url = html.escape(str(task_url), quote=True)
+            lines.append(f'<a href="{safe_url}">View details</a>')
 
         return "\n".join(line for line in lines if line is not None)
 
@@ -114,15 +118,31 @@ class TelegramSender:
 
                 # Rate limited
                 if response.status_code == 429:
-                    retry_after = (
-                        response.json().get("parameters", {}).get("retry_after", 30)
-                    )
+                    try:
+                        retry_after = int(
+                            response.json().get("parameters", {}).get("retry_after", 30)
+                        )
+                    except (ValueError, TypeError, AttributeError):
+                        retry_after = 30
+                    retry_after = min(
+                        max(retry_after, 1), 60
+                    )  # never block the worker for long
                     logger.warning(
                         "Telegram rate limited. Waiting %ds...",
                         retry_after,
                     )
                     time.sleep(retry_after)
                     continue
+
+                # Other 4xx errors (bad request, bot blocked, chat not found) are permanent
+                if 400 <= response.status_code < 500:
+                    logger.error(
+                        "Telegram API rejected the message for chat_id=%s: %s %s",
+                        chat_id,
+                        response.status_code,
+                        response.text[:200],
+                    )
+                    return False
 
                 logger.warning(
                     "Telegram API error (attempt %d/%d): %s %s",
@@ -133,11 +153,12 @@ class TelegramSender:
                 )
 
             except requests.RequestException as e:
+                # Log only the exception type: its message contains the URL with the bot token
                 logger.warning(
                     "Telegram request failed (attempt %d/%d): %s",
                     attempt + 1,
                     self._max_retries + 1,
-                    e,
+                    type(e).__name__,
                 )
 
             # Exponential backoff: 5s → 15s → 45s
